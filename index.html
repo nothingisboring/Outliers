@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outliers: Daily Path</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;700&family=Monoton&display=swap');
+        
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: #f1f5f9;
+            color: #1e293b;
+            overflow-x: hidden;
+            scroll-behavior: smooth;
+        }
+
+        .title-font { font-family: 'Monoton', cursive; font-weight: 400; }
+
+        #mazeViewport {
+            transition: transform 3.5s cubic-bezier(0.4, 0, 0.2, 1);
+            transform-origin: top center;
+            width: 100%;
+        }
+
+        .maze-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4rem;
+            padding-top: 1.5rem;
+            padding-bottom: 50vh;
+            position: relative;
+        }
+
+        #pathLayer {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            pointer-events: none;
+            z-index: 5;
+        }
+
+        .maze-path-line {
+            fill: none;
+            stroke: #6366f1; 
+            stroke-width: 6;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+            stroke-dasharray: 2000;
+            stroke-dashoffset: 2000;
+            animation: drawPath 2.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+            filter: drop-shadow(0 4px 6px rgba(99, 102, 241, 0.2));
+        }
+
+        @keyframes drawPath { to { stroke-dashoffset: 0; } }
+
+        .row-wrapper {
+            width: 100%;
+            max-width: 650px;
+            opacity: 0.15;
+            transform: translateY(20px);
+            transition: all 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            z-index: 10;
+        }
+
+        .row-wrapper.active { opacity: 1; transform: translateY(0); }
+        .row-wrapper.completed { opacity: 1; }
+
+        .grid-cell {
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            aspect-ratio: 1.2 / 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 8px; 
+            font-weight: 700;
+            text-transform: uppercase;
+            cursor: pointer;
+            border-radius: 12px;
+            background: #ffffff;
+            border: 2px solid #e2e8f0;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+            color: #475569;
+            line-height: 1.1;
+            overflow: hidden;
+        }
+
+        .cell-text {
+            display: block;
+            width: 100%;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        @media (max-width: 640px) {
+            .grid-cell { border-radius: 8px; border-width: 1.5px; padding: 4px; aspect-ratio: 1/1; }
+            .maze-container { gap: 3.5rem; }
+        }
+
+        .grid-cell:hover:not(.locked):not(.correct):not(.incorrect) {
+            border-color: #6366f1;
+            color: #6366f1;
+            transform: translateY(-2px);
+        }
+
+        .grid-cell.selected { background: #6366f1; color: white !important; border-color: #4f46e5; }
+        .grid-cell.correct { background: #10b981; color: white !important; border-color: #059669; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); z-index: 12; cursor: default; }
+        .grid-cell.incorrect { background: #ef4444; color: white !important; border-color: #dc2626; cursor: default; opacity: 0.8; animation: shake 0.4s; }
+
+        @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+
+        .mistake-bar { height: 6px; width: 28px; border-radius: 100px; background-color: #e2e8f0; transition: all 0.3s ease; }
+        .mistake-bar.spent { background-color: #ef4444; box-shadow: 0 0 10px rgba(239, 68, 68, 0.3); }
+
+        .sticky-controls {
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            background: linear-gradient(to top, #f1f5f9 90%, transparent);
+            padding: 1.5rem 1rem;
+            z-index: 100;
+        }
+
+        #finalRevealOverlay {
+            position: fixed;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0.8);
+            background: rgba(255, 255, 255, 0.9);
+            border: 3px solid #10b981;
+            padding: 2rem 3rem;
+            border-radius: 30px;
+            pointer-events: none;
+            opacity: 0;
+            transition: all 1.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            z-index: 150;
+            backdrop-filter: blur(8px);
+            text-align: center;
+        }
+
+        .maze-zoomed { transform: scale(0.28) translateY(-10%); }
+    </style>
+</head>
+<body class="flex flex-col min-h-screen">
+
+    <header class="py-6 px-6 flex flex-col items-center sticky top-0 bg-[#f1f5f9]/90 backdrop-blur-md z-[110] border-b border-slate-200">
+        <h1 class="title-font text-3xl sm:text-5xl text-indigo-700 mb-1">OUTLIERS</h1>
+        <div id="dateDisplay" class="text-[10px] font-bold text-slate-400 uppercase tracking-[0.4em] mb-3">MISSION ARCHIVE</div>
+        <div class="flex gap-2 mb-3">
+            <button id="archiveTrigger" class="px-4 py-1.5 bg-white border border-slate-200 rounded-full text-[10px] font-black uppercase tracking-widest text-slate-500 hover:text-indigo-600 hover:border-indigo-600 transition-all shadow-sm">Select Mission</button>
+        </div>
+        <div id="statusMessage" class="text-[10px] font-black text-center uppercase tracking-[0.4em] text-indigo-500/80">Node 1: Active</div>
+    </header>
+
+    <div id="finalRevealOverlay">
+        <h3 class="text-4xl font-black text-emerald-600 italic mb-1 tracking-tighter">SUCCESS</h3>
+        <p class="font-bold text-slate-500 uppercase tracking-[0.3em] text-[10px]">The Path is Cleared</p>
+    </div>
+
+    <main id="mazeViewport" class="flex-grow p-4 w-full">
+        <div id="mazeContainer" class="maze-container">
+            <svg id="pathLayer"><g id="pathLinesGroup"></g></svg>
+        </div>
+    </main>
+
+    <footer class="sticky-controls">
+        <div class="max-w-xl mx-auto flex flex-col items-center gap-4">
+            <div class="flex items-center gap-3">
+                <span class="text-[9px] uppercase tracking-widest text-slate-400 font-black">Integrity</span>
+                <div id="mistakeContainer" class="flex gap-1.5">
+                    <div class="mistake-bar"></div><div class="mistake-bar"></div><div class="mistake-bar"></div><div class="mistake-bar"></div>
+                </div>
+            </div>
+            <div class="flex gap-3 w-full sm:w-auto">
+                <button id="hintBtn" class="px-6 py-3 bg-white rounded-xl text-[10px] font-bold border-2 border-slate-200 hover:border-indigo-300 hover:text-indigo-600 shadow-sm transition-all uppercase tracking-widest">Hint</button>
+                <button id="submitBtn" class="flex-grow sm:flex-none bg-indigo-600 text-white px-10 py-3 rounded-xl font-black text-xs uppercase tracking-[0.2em] opacity-20 cursor-not-allowed transition-all shadow-lg" disabled>Analyze Node</button>
+            </div>
+        </div>
+    </footer>
+
+    <div id="modal" class="fixed inset-0 z-[200] hidden flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div class="bg-white rounded-3xl max-w-md w-full p-6 sm:p-8 shadow-2xl border border-slate-100">
+            <h2 id="modalTitle" class="title-font text-xl font-bold mb-4 text-indigo-600 tracking-widest text-center"></h2>
+            <div id="modalBody" class="text-slate-600 mb-6 text-sm leading-relaxed overflow-y-auto max-h-[50vh] font-medium"></div>
+            <button id="modalClose" class="w-full bg-slate-800 text-white py-3 rounded-xl font-bold hover:bg-slate-700 transition uppercase tracking-widest shadow-lg text-[10px]">Continue</button>
+        </div>
+    </div>
+
+    <script>
+        const PUZZLE_SETS = {
+            "alpha": {
+                name: "Alpha Protocol",
+                date: "Mission: Logical Patterns",
+                puzzles: [
+                    { items: ["Lift", "Life", "Live", "Like", "Line"], oddity: "Lift", reason: "Lift is the only one that doesn't follow the LI-E pattern (long 'i' vowel and silent 'e').", hint: "Look at the vowel sounds and spelling patterns." },
+                    { items: ["Cocoa", "Boa", "Stoa", "Protozoa", "Ambrosia"], oddity: "Ambrosia", reason: "Ambrosia is the outlier as all the others end in -oa.", hint: "Check the word endings carefully." },
+                    { items: ["Lestrade", "Holmes", "Stradivarius", "Watson", "Hudson"], oddity: "Lestrade", reason: "Inspector Lestrade doesn't live at 221B Baker Street; the others are residents (or in the case of Stradivarius, Holmes' violin).", hint: "Think of 221B Baker Street inhabitants and belongings." },
+                    { items: ["Harp", "Zither", "Koto", "Sitar", "Guitar"], oddity: "Sitar", reason: "Sitar breaks the pattern of descending string counts (Harp 47, Zither 29-40+, Koto 13, Guitar 6).", hint: "Consider the number of strings on each instrument." },
+                    { items: ["January", "March", "April", "August", "December"], oddity: "April", reason: "April is the outlier; the others are named after Roman gods or emperors.", hint: "Think about the etymology of calendar months." },
+                    { items: ["Amazon", "Nile", "Yangtze", "Volga", "Mississippi"], oddity: "Volga", reason: "The Volga flows into the landlocked Caspian Sea (endorheic basin); others flow into oceans.", hint: "Where do these rivers eventually drain?" },
+                    { items: ["Chess", "Poker", "Go", "Bridge", "Backgammon"], oddity: "Poker", reason: "Poker involves hidden information and bluffing; the others are games of perfect or near-perfect information.", hint: "Which game relies on keeping your cards secret?" }
+                ]
+            },
+            "modern": {
+                name: "Modern Classics",
+                date: "Mission: Literary & Artistic",
+                puzzles: [
+                    { items: ["Maggie", "Molly", "May", "Minnie", "Milly"], oddity: "Minnie", reason: "Minnie is missing from e.e. cummings' famous poem 'maggie and milly and molly and may'.", hint: "A poet wrote about four of these girls at the beach." },
+                    { items: ["Time", "Thyme", "Tint", "Taekwondo", "Tie"], oddity: "Tint", reason: "Tint is the outlier as all the others share the same /ai/ vowel sound.", hint: "Say them out loud and listen to the vowels." },
+                    { items: ["Last", "First", "Old", "Elephant", "Dumb"], oddity: "Dumb", reason: "All others are linked to titles with 'man' after them (Last Man, First Man, Old Man, Elephant Man).", hint: "Add 'Man' to the end of each word." },
+                    { items: ["Red", "Yellow", "Blue", "White", "Green"], oddity: "Green", reason: "All the other colors feature predominantly in Piet Mondrian’s paintings.", hint: "Think of primary colors + b/w in abstract art." },
+                    { items: ["Short and sweet", "Bird on the wire", "What a shame", "To quote a phrase", "Stops and starts"], oddity: "Bird on the wire", reason: "All the others are phrases from 'You’re A Big Girl Now' by Bob Dylan.", hint: "One is a Leonard Cohen song; the rest are one Dylan song." },
+                    { items: ["Ouch", "Ops", "Oi", "Oops", "Oh"], oddity: "Ops", reason: "The others are interjections made by humans; 'Ops' is usually plural operations.", hint: "Which one isn't a noise you make when surprised or hurt?" },
+                    { items: ["Dunning-Kruger", "Moore", "Murphy", "Godwin", "Ohm"], oddity: "Dunning-Kruger", reason: "All the others gave their name to a singular 'Law' (Moore's Law, etc.); Dunning-Kruger is an 'Effect'.", hint: "Effect vs Law." }
+                ]
+            },
+            "linguistics": {
+                name: "Linguistic Shifts",
+                date: "Mission: Latin & Slang",
+                puzzles: [
+                    { items: ["Splash", "Stash", "Splurge", "Fork out", "Cough up"], oddity: "Stash", reason: "Stash means to save/hide money; all the others are about paying out.", hint: "Saving vs Spending." },
+                    { items: ["Ad hoc", "Pro Bono", "Quid pro quo", "Carpe diem", "Sic transit gloria"], oddity: "Sic transit gloria", reason: "It breaks the pattern of having a longer first word in each phrase.", hint: "Look at the length of the first words." },
+                    { items: ["Augustine", "Mortimer", "Cuthbert", "Nicholas", "Margaret"], oddity: "Mortimer", reason: "Mortimer is not a saint; the others all are.", hint: "Who isn't canonized?" },
+                    { items: ["Moolah", "Dough", "Bread", "Cabbage", "Oven"], oddity: "Oven", reason: "Oven is an appliance; others are slang for money.", hint: "Common slang for cash." },
+                    { items: ["Bail", "Dip", "Bounce", "Split", "Stay"], oddity: "Stay", reason: "Stay means remaining; others are slang for leaving.", hint: "Which one isn't a way to say 'bye'?" },
+                    { items: ["Skint", "Broke", "Flat", "Clean", "Loaded"], oddity: "Loaded", reason: "Loaded means wealthy; others mean no money.", hint: "Rich vs Poor." },
+                    { items: ["Grand", "K", "Large", "Thousand", "Cent"], oddity: "Cent", reason: "Cent is the smallest unit; others denote 1,000.", hint: "Scale of value." }
+                ]
+            }
+        };
+
+        let currentSetKey = "alpha";
+        let activeRow = 0, selectedCol = null, mistakes = 0, hintUsed = false;
+        let correctCellPositions = [];
+
+        const mazeContainer = document.getElementById('mazeContainer');
+        const submitBtn = document.getElementById('submitBtn');
+        const statusMsg = document.getElementById('statusMessage');
+        const hintBtn = document.getElementById('hintBtn');
+        const modal = document.getElementById('modal');
+        const pathLinesGroup = document.getElementById('pathLinesGroup');
+
+        function loadPuzzleSet(key) {
+            currentSetKey = key;
+            activeRow = 0; selectedCol = null; mistakes = 0; hintUsed = false;
+            correctCellPositions = [];
+            pathLinesGroup.innerHTML = '';
+            document.getElementById('mazeViewport').classList.remove('maze-zoomed');
+            document.getElementById('dateDisplay').textContent = PUZZLE_SETS[key].date;
+            
+            const bars = document.querySelectorAll('.mistake-bar');
+            bars.forEach(b => b.classList.remove('spent'));
+            
+            hintBtn.disabled = false;
+            hintBtn.classList.remove('opacity-30');
+            submitBtn.classList.remove('hidden');
+            submitBtn.disabled = true;
+            submitBtn.classList.add('opacity-20');
+            
+            renderMaze();
+            setTimeout(smartScaleAllRows, 100);
+            statusMsg.textContent = `Node 1: Active`;
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function renderMaze() {
+            mazeContainer.querySelectorAll('.row-wrapper').forEach(r => r.remove());
+            PUZZLE_SETS[currentSetKey].puzzles.forEach((data, rowIndex) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = `row-wrapper w-full ${rowIndex === 0 ? 'active' : ''}`;
+                wrapper.id = `row-${rowIndex}`;
+                const grid = document.createElement('div');
+                grid.className = `grid grid-cols-5 gap-2 sm:gap-3 px-2`;
+                
+                data.items.forEach((item, colIndex) => {
+                    const cell = document.createElement('div');
+                    cell.className = `grid-cell`;
+                    const span = document.createElement('span');
+                    span.className = 'cell-text';
+                    span.textContent = item;
+                    cell.appendChild(span);
+                    cell.onclick = () => selectCell(rowIndex, colIndex);
+                    grid.appendChild(cell);
+                });
+                
+                wrapper.appendChild(grid);
+                mazeContainer.appendChild(wrapper);
+            });
+        }
+
+        function smartScaleAllRows() {
+            document.querySelectorAll('.cell-text').forEach(t => {
+                const cell = t.parentElement;
+                const cellW = cell.clientWidth - 12;
+                let fontSize = 13;
+                t.style.fontSize = fontSize + 'px';
+                while (t.scrollWidth > cellW && fontSize > 7) {
+                    fontSize -= 0.5;
+                    t.style.fontSize = fontSize + 'px';
+                }
+            });
+            redrawLines();
+        }
+
+        function selectCell(row, col) {
+            if (row !== activeRow) return;
+            const cells = document.querySelectorAll(`#row-${row} .grid-cell`);
+            if (cells[col].classList.contains('incorrect') || cells[col].classList.contains('correct')) return;
+            selectedCol = (selectedCol === col) ? null : col;
+            cells.forEach((c, idx) => c.classList.toggle('selected', idx === selectedCol));
+            submitBtn.disabled = selectedCol === null;
+            submitBtn.classList.toggle('opacity-20', selectedCol === null);
+        }
+
+        function handleSubmit() {
+            const currentPuzzle = PUZZLE_SETS[currentSetKey].puzzles[activeRow];
+            const isCorrect = currentPuzzle.items[selectedCol] === currentPuzzle.oddity;
+            const cell = document.querySelector(`#row-${activeRow} .grid-cell:nth-child(${selectedCol + 1})`);
+            
+            if (isCorrect) {
+                cell.classList.replace('selected', 'correct');
+                const rect = cell.getBoundingClientRect(), cRect = mazeContainer.getBoundingClientRect();
+                correctCellPositions.push({ x: rect.left + rect.width/2 - cRect.left, y: rect.top + rect.height/2 - cRect.top });
+                if (activeRow > 0) drawStepPath();
+                statusMsg.textContent = `Node ${activeRow + 1} Calibrated`;
+                setTimeout(progressMaze, 1000);
+            } else {
+                mistakes++;
+                const bars = document.querySelectorAll('.mistake-bar');
+                if (bars[mistakes-1]) bars[mistakes-1].classList.add('spent');
+                cell.classList.remove('selected');
+                cell.classList.add('incorrect');
+                selectedCol = null;
+                submitBtn.disabled = true;
+                submitBtn.classList.add('opacity-20');
+                if (mistakes >= 4) endGame(false);
+            }
+        }
+
+        function drawStepPath() {
+            const curr = correctCellPositions[activeRow], prev = correctCellPositions[activeRow-1];
+            const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+            line.setAttribute("d", `M ${prev.x} ${prev.y} V ${(prev.y+curr.y)/2} H ${curr.x} V ${curr.y}`);
+            line.setAttribute("class", "maze-path-line");
+            pathLinesGroup.appendChild(line);
+        }
+
+        function redrawLines() {
+            pathLinesGroup.innerHTML = '';
+            const newPos = [];
+            document.querySelectorAll('.grid-cell.correct').forEach(c => {
+                const rect = c.getBoundingClientRect(), cRect = mazeContainer.getBoundingClientRect();
+                newPos.push({ x: rect.left + rect.width/2 - cRect.left, y: rect.top + rect.height/2 - cRect.top });
+            });
+            correctCellPositions = newPos;
+            for(let i=1; i<newPos.length; i++) {
+                const prev = newPos[i-1], curr = newPos[i];
+                const line = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                line.setAttribute("d", `M ${prev.x} ${prev.y} V ${(prev.y+curr.y)/2} H ${curr.x} V ${curr.y}`);
+                line.setAttribute("class", "maze-path-line");
+                line.style.animation = "none"; line.style.strokeDashoffset = "0";
+                pathLinesGroup.appendChild(line);
+            }
+        }
+
+        function progressMaze() {
+            const curRow = document.getElementById(`row-${activeRow}`);
+            curRow.classList.add('completed');
+            curRow.classList.remove('active');
+            if (activeRow === PUZZLE_SETS[currentSetKey].puzzles.length - 1) {
+                endGame(true);
+            } else {
+                activeRow++; selectedCol = null;
+                submitBtn.disabled = true;
+                submitBtn.classList.add('opacity-20');
+                const next = document.getElementById(`row-${activeRow}`);
+                next.classList.add('active');
+                next.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                statusMsg.textContent = `Node ${activeRow+1}: Active`;
+            }
+        }
+
+        function endGame(won) {
+            submitBtn.classList.add('hidden');
+            const data = PUZZLE_SETS[currentSetKey].puzzles;
+            let content = data.map((d, i) => `<div class="mb-4"><strong>NODE ${i+1}: ${d.oddity}</strong><br/><span class="text-xs text-slate-500">${d.reason}</span></div>`).join('');
+            
+            if (won) {
+                document.getElementById('mazeViewport').classList.add('maze-zoomed');
+                document.getElementById('finalRevealOverlay').style.opacity = '1';
+                setTimeout(() => { 
+                    document.getElementById('finalRevealOverlay').style.opacity = '0'; 
+                    showModal("MISSION SUCCESS", content); 
+                }, 3500);
+            } else {
+                showModal("MISSION FAILED", "Integrity lost. The path has collapsed.<br/><br/>" + content);
+            }
+        }
+
+        function showModal(title, body) {
+            document.getElementById('modalTitle').textContent = title;
+            document.getElementById('modalBody').innerHTML = body;
+            modal.classList.remove('hidden');
+        }
+
+        function openArchive() {
+            let archiveHtml = `<div class="flex flex-col gap-3">`;
+            Object.keys(PUZZLE_SETS).forEach(key => {
+                const set = PUZZLE_SETS[key];
+                archiveHtml += `
+                    <div onclick="selectFromArchive('${key}')" class="p-4 border-2 rounded-2xl cursor-pointer hover:border-indigo-600 transition-all ${key === currentSetKey ? 'border-indigo-600 bg-indigo-50/30' : 'border-slate-100'}">
+                        <div class="font-bold text-slate-800">${set.name}</div>
+                        <div class="text-[9px] text-slate-400 uppercase font-black">${set.date}</div>
+                    </div>`;
+            });
+            archiveHtml += `</div>`;
+            showModal("SELECT MISSION", archiveHtml);
+        }
+
+        window.selectFromArchive = (key) => {
+            modal.classList.add('hidden');
+            loadPuzzleSet(key);
+        };
+
+        document.getElementById('archiveTrigger').onclick = openArchive;
+        submitBtn.onclick = handleSubmit;
+        hintBtn.onclick = () => {
+            if (hintUsed) return;
+            hintUsed = true; hintBtn.disabled = true; hintBtn.classList.add('opacity-30');
+            showModal(`HINT: NODE ${activeRow + 1}`, PUZZLE_SETS[currentSetKey].puzzles[activeRow].hint);
+        };
+        document.getElementById('modalClose').onclick = () => modal.classList.add('hidden');
+        window.addEventListener('resize', smartScaleAllRows);
+        window.onload = () => loadPuzzleSet("alpha");
+    </script>
+</body>
+</html>
